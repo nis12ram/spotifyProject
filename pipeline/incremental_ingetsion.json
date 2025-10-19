@@ -1,19 +1,19 @@
 {
-	"name": "incremental_ingetsion_copy",
+	"name": "incremental_ingetsion",
 	"properties": {
 		"activities": [
 			{
-				"name": "AzureSQLTToLake",
+				"name": "sql_to_lake",
 				"type": "Copy",
 				"dependsOn": [
 					{
-						"activity": "last_cdc",
+						"activity": "current",
 						"dependencyConditions": [
 							"Succeeded"
 						]
 					},
 					{
-						"activity": "current",
+						"activity": "last_cdc",
 						"dependencyConditions": [
 							"Succeeded"
 						]
@@ -81,42 +81,6 @@
 				]
 			},
 			{
-				"name": "last_cdc",
-				"type": "Lookup",
-				"dependsOn": [],
-				"policy": {
-					"timeout": "0.12:00:00",
-					"retry": 0,
-					"retryIntervalInSeconds": 30,
-					"secureOutput": false,
-					"secureInput": false
-				},
-				"userProperties": [],
-				"typeProperties": {
-					"source": {
-						"type": "JsonSource",
-						"storeSettings": {
-							"type": "AzureBlobFSReadSettings",
-							"recursive": true,
-							"enablePartitionDiscovery": false
-						},
-						"formatSettings": {
-							"type": "JsonReadSettings"
-						}
-					},
-					"dataset": {
-						"referenceName": "json_dynamic",
-						"type": "DatasetReference",
-						"parameters": {
-							"container": "bronze",
-							"folder": "cdc",
-							"file": "cdc.json"
-						}
-					},
-					"firstRowOnly": false
-				}
-			},
-			{
 				"name": "current",
 				"type": "SetVariable",
 				"dependsOn": [],
@@ -134,11 +98,11 @@
 				}
 			},
 			{
-				"name": "If increment data",
+				"name": "if_data_incremented",
 				"type": "IfCondition",
 				"dependsOn": [
 					{
-						"activity": "AzureSQLTToLake",
+						"activity": "sql_to_lake",
 						"dependencyConditions": [
 							"Succeeded"
 						]
@@ -277,7 +241,7 @@
 									"type": "DatasetReference",
 									"parameters": {
 										"container": "bronze",
-										"folder": "cdc",
+										"folder": "cdc_utils",
 										"file": "empty.json"
 									}
 								}
@@ -288,13 +252,175 @@
 									"type": "DatasetReference",
 									"parameters": {
 										"container": "bronze",
-										"folder": "cdc",
+										"folder": {
+											"value": "@concat(pipeline().parameters.table, '_cdc')",
+											"type": "Expression"
+										},
 										"file": "cdc.json"
 									}
 								}
 							]
 						}
 					]
+				}
+			},
+			{
+				"name": "last_cdc_exists_or_not",
+				"type": "GetMetadata",
+				"dependsOn": [],
+				"policy": {
+					"timeout": "0.12:00:00",
+					"retry": 0,
+					"retryIntervalInSeconds": 30,
+					"secureOutput": false,
+					"secureInput": false
+				},
+				"userProperties": [],
+				"typeProperties": {
+					"dataset": {
+						"referenceName": "json_dynamic",
+						"type": "DatasetReference",
+						"parameters": {
+							"container": "bronze",
+							"folder": {
+								"value": "@concat(pipeline().parameters.table, '_cdc')",
+								"type": "Expression"
+							},
+							"file": "cdc.json"
+						}
+					},
+					"fieldList": [
+						"exists"
+					],
+					"storeSettings": {
+						"type": "AzureBlobFSReadSettings",
+						"enablePartitionDiscovery": false
+					},
+					"formatSettings": {
+						"type": "JsonReadSettings"
+					}
+				}
+			},
+			{
+				"name": "if_last_cdc_do_not_exists_create_it",
+				"type": "IfCondition",
+				"dependsOn": [
+					{
+						"activity": "last_cdc_exists_or_not",
+						"dependencyConditions": [
+							"Succeeded"
+						]
+					}
+				],
+				"userProperties": [],
+				"typeProperties": {
+					"expression": {
+						"value": "@activity('last_cdc_exists_or_not').output.exists",
+						"type": "Expression"
+					},
+					"ifFalseActivities": [
+						{
+							"name": "cdc_utils_to_table_cdc",
+							"type": "Copy",
+							"dependsOn": [],
+							"policy": {
+								"timeout": "0.12:00:00",
+								"retry": 0,
+								"retryIntervalInSeconds": 30,
+								"secureOutput": false,
+								"secureInput": false
+							},
+							"userProperties": [],
+							"typeProperties": {
+								"source": {
+									"type": "JsonSource",
+									"storeSettings": {
+										"type": "AzureBlobFSReadSettings",
+										"recursive": true,
+										"enablePartitionDiscovery": false
+									},
+									"formatSettings": {
+										"type": "JsonReadSettings"
+									}
+								},
+								"sink": {
+									"type": "JsonSink",
+									"storeSettings": {
+										"type": "AzureBlobFSWriteSettings"
+									},
+									"formatSettings": {
+										"type": "JsonWriteSettings"
+									}
+								},
+								"enableStaging": false
+							},
+							"inputs": [
+								{
+									"referenceName": "json_dynamic",
+									"type": "DatasetReference",
+									"parameters": {
+										"container": "bronze",
+										"folder": "cdc_utils",
+										"file": "cdc.json"
+									}
+								}
+							],
+							"outputs": [
+								{
+									"referenceName": "json_dynamic",
+									"type": "DatasetReference",
+									"parameters": {
+										"container": "bronze",
+										"folder": "@concat(pipeline().parameters.table, '_cdc')",
+										"file": "cdc.json"
+									}
+								}
+							]
+						}
+					]
+				}
+			},
+			{
+				"name": "last_cdc",
+				"type": "Lookup",
+				"dependsOn": [
+					{
+						"activity": "if_last_cdc_do_not_exists_create_it",
+						"dependencyConditions": [
+							"Succeeded"
+						]
+					}
+				],
+				"policy": {
+					"timeout": "0.12:00:00",
+					"retry": 0,
+					"retryIntervalInSeconds": 30,
+					"secureOutput": false,
+					"secureInput": false
+				},
+				"userProperties": [],
+				"typeProperties": {
+					"source": {
+						"type": "JsonSource",
+						"storeSettings": {
+							"type": "AzureBlobFSReadSettings",
+							"recursive": true,
+							"enablePartitionDiscovery": false
+						},
+						"formatSettings": {
+							"type": "JsonReadSettings"
+						}
+					},
+					"dataset": {
+						"referenceName": "json_dynamic",
+						"type": "DatasetReference",
+						"parameters": {
+							"container": "bronze",
+							"folder": "@concat(pipeline().parameters.table, '_cdc')",
+							"file": "cdc.json"
+						}
+					},
+					"firstRowOnly": false
 				}
 			}
 		],
