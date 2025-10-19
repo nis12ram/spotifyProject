@@ -1,5 +1,5 @@
 {
-	"name": "incremental_ingetsion_copy2",
+	"name": "incremental_ingestion_copy2",
 	"properties": {
 		"activities": [
 			{
